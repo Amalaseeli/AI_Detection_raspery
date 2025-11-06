@@ -9,28 +9,49 @@ class DatabaseConnector:
         self.cfg = self._load_config()
 
     def _load_config(self):
+        # Defaults
         cfg = {
-            "server": os.getenv("DB_SERVER"),
-            "port": os.getenv("DB_PORT", "1433"),
-            "database": os.getenv("DB_NAME"),
-            "username": os.getenv("DB_USER"),
-            "password": os.getenv("DB_PASSWORD"),
-            "driver": os.getenv("DB_DRIVER") or "ODBC Driver 18 for SQL Server",
-            "encrypt": os.getenv("DB_ENCRYPT", "yes"),
-            "trust_server_certificate": os.getenv("DB_TRUST_SERVER_CERT", "yes"),
-            "trusted_connection": os.getenv("DB_TRUSTED_CONNECTION"),
+            "server": None,
+            "port": "1433",
+            "database": None,
+            "username": None,
+            "password": None,
+            "driver": "ODBC Driver 18 for SQL Server",
+            "encrypt": "yes",
+            "trust_server_certificate": "yes",
+            "trusted_connection": None,
         }
+
+        # Load YAML and override defaults
         yml = Path(__file__).resolve().parent / "db_cred_sql.yaml"
         if yml.exists():
             try:
                 with open(yml, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f) or {}
                 for k in cfg:
-                    if not cfg[k] and k in data:
-                        val = data.get(k)
-                        cfg[k] = str(val) if val is not None else cfg[k]
+                    if k in data and data[k] is not None:
+                        v = data[k]
+                        cfg[k] = str(v) if not isinstance(v, str) else v
             except Exception as e:
                 print(f"Warning: failed to read {yml}: {e}")
+
+        # Environment variables take highest precedence
+        env_map = {
+            "server": "DB_SERVER",
+            "port": "DB_PORT",
+            "database": "DB_NAME",
+            "username": "DB_USER",
+            "password": "DB_PASSWORD",
+            "driver": "DB_DRIVER",
+            "encrypt": "DB_ENCRYPT",
+            "trust_server_certificate": "DB_TRUST_SERVER_CERT",
+            "trusted_connection": "DB_TRUSTED_CONNECTION",
+        }
+        for k, envk in env_map.items():
+            val = os.getenv(envk)
+            if val is not None and str(val).strip() != "":
+                cfg[k] = val
+
         return cfg
 
     def create_connection(self):
@@ -99,4 +120,9 @@ class DatabaseConnector:
                 return pyodbc.connect(conn_str)
         except Exception as e:
             print(f"DB connection error: {e}")
+            try:
+                # Help diagnose by printing installed ODBC drivers
+                print(f"Available ODBC drivers: {pyodbc.drivers()}")
+            except Exception:
+                pass
             return None
