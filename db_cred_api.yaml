@@ -1,9 +1,0 @@
-# API configuration for Raspberry Pi client variant
-# Do not store secrets in source control for production.
-
-# Example: http://<server>:<port>/ai-transaction
-api_url: "http://192.168.0.212:2003/ai-transaction"
-
-# Optional bearer token for simple auth. Leave blank if not used.
-api_token: ""
-

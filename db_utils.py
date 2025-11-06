@@ -42,34 +42,61 @@ class DatabaseConnector:
                 print("DB config missing: server/database/driver.")
                 return None
 
-            parts = [
-                f"DRIVER={{{driver}}}",
-                f"SERVER={server},{self.cfg.get('port','1433')}",
-                f"DATABASE={database}",
-            ]
+            drv_lower = (driver or "").lower()
+            is_freetds = ("freetds" in drv_lower) or ("tdsodbc" in drv_lower)
 
-            # Windows integrated auth if requested
-            if (self.cfg.get("trusted_connection") or "").lower() in ("1", "true", "yes"):
-                parts.append("Trusted_Connection=yes")
-            else:
+            if is_freetds:
+                parts = [
+                    f"DRIVER={{{driver}}}",
+                    f"SERVER={server}",
+                    f"PORT={self.cfg.get('port','1433')}",
+                    f"DATABASE={database}",
+                ]
+
+                # FreeTDS typically uses SQL auth
                 user = self.cfg.get("username")
                 pwd = self.cfg.get("password")
                 if not user or not pwd:
-                    print("DB config missing username/password.")
+                    print("DB config missing username/password for FreeTDS.")
                     return None
                 parts.append(f"UID={user}")
                 parts.append(f"PWD={pwd}")
 
-            enc = (self.cfg.get("encrypt") or "yes").lower()
-            parts.append(f"Encrypt={'yes' if enc in ('1','true','yes') else 'no'}")
-            if (self.cfg.get('trust_server_certificate') or 'yes').lower() in ('1','true','yes'):
-                parts.append("TrustServerCertificate=yes")
+                # Modern SQL Server versions work best with TDS 8.0
+                parts.append("TDS_Version=8.0")
+                parts.append("ClientCharset=UTF-8")
+                parts.append("Connection Timeout=5")
 
-            parts.append("Connection Timeout=5")
+                conn_str = ";".join(parts) + ";"
+                return pyodbc.connect(conn_str)
+            else:
+                parts = [
+                    f"DRIVER={{{driver}}}",
+                    f"SERVER={server},{self.cfg.get('port','1433')}",
+                    f"DATABASE={database}",
+                ]
 
-            conn_str = ";".join(parts) + ";"
-            return pyodbc.connect(conn_str)
+                # Windows integrated auth if requested
+                if (self.cfg.get("trusted_connection") or "").lower() in ("1", "true", "yes"):
+                    parts.append("Trusted_Connection=yes")
+                else:
+                    user = self.cfg.get("username")
+                    pwd = self.cfg.get("password")
+                    if not user or not pwd:
+                        print("DB config missing username/password.")
+                        return None
+                    parts.append(f"UID={user}")
+                    parts.append(f"PWD={pwd}")
+
+                enc = (self.cfg.get("encrypt") or "yes").lower()
+                parts.append(f"Encrypt={'yes' if enc in ('1','true','yes') else 'no'}")
+                if (self.cfg.get('trust_server_certificate') or 'yes').lower() in ('1','true','yes'):
+                    parts.append("TrustServerCertificate=yes")
+
+                parts.append("Connection Timeout=5")
+
+                conn_str = ";".join(parts) + ";"
+                return pyodbc.connect(conn_str)
         except Exception as e:
             print(f"DB connection error: {e}")
             return None
-

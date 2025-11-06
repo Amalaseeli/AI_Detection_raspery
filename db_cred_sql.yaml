@@ -5,7 +5,7 @@ port: 2003
 database: "EposV3"
 username: "sa"
 password: "mg812yn"
-driver: ODBC Driver 18 for SQL Server
+driver: FreeTDS
 
 # Security options
 encrypt: yes
