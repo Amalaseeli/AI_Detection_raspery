@@ -1,0 +1,15 @@
+
+
+server: 192.168.0.212
+port: 2003
+database: "EposV3"
+username: "sa"
+password: "mg812yn"
+driver: ODBC Driver 18 for SQL Server
+
+# Security options
+encrypt: yes
+trust_server_certificate: yes
+
+
+

@@ -17,7 +17,7 @@ import numpy as np
 import pyautogui
 from config_utils_fruit import ROI_PATH as roi_path , MODEL_PATH as model_path, product_data
 import os
-from save_to_db_api import save_detected_product, clear_database
+from save_to_db import save_detected_product, clear_database
 import math
 from collections import Counter
 import json
@@ -496,4 +496,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
