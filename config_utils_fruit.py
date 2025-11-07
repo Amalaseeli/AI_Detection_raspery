@@ -34,7 +34,7 @@ def get_data_dir() -> str:
         return os.path.dirname(os.path.abspath(__file__))
 
 
-MODEL_PATH = resource_path(os.path.join("models", "fruit_float32.tflite"))
+MODEL_PATH = resource_path(os.path.join("models", "fruit_saved_model", "fruit_float32.tflite"))
 
 DATA_DIR = get_data_dir()
 ROI_PATH = os.path.join(DATA_DIR, "roi.txt")
