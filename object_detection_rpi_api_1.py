@@ -23,30 +23,10 @@ from collections import Counter
 import json
 from enum import Enum, auto
 from PIL import Image, ImageDraw, ImageFont
-import time
-import os
-
 
 HEADLESS = os.environ.get("HEADLESS", "0") == "1"
-try:
-    import torch
-    torch.set_num_threads(2)
-    torch.set_num_interop_threads(1)
-except Exception:
-    pass
-os.environ.setdefault('OMP_NUM_THREADS', '2')
-os.environ.setdefault('OPENBLAS_NUM_THREADS', '2')
-
 # Load the YOLO model
 model = YOLO(model_path)
-
-# Good default: 320 input, fused NMS
-model.export(format="tflite", imgsz=320, nms=True)  # creates models/fruit.tflite
-
-try:
-    _ = model(np.zeros((320,320,3), dtype = np.uint8), imgsz=320, verbose=False, device ='cpu')
-except Exception:
-    pass
 names = model.names if hasattr(model, "names") else {}
 
 # Screen size with headless-safe fallback
@@ -199,8 +179,8 @@ def draw_labels_centered(img, boxes_labels, src_size):
 # Motion detection
 prev_frame = None
 motion_area_threshold = 2000
-motion_frames_required = 2
-stable_frames_required = 1
+motion_frames_required = 3
+stable_frames_required = 5
 motion_count = 0
 stable_count = 0
 
@@ -223,17 +203,6 @@ def _open_camera():
     cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
     if not cap.isOpened():
         cap = cv2.VideoCapture(0, cv2.CAP_ANY)
-    # Reduce buffering and latency and enforce small frame
-    try:
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    except Exception:
-        pass
-    try:
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-    except Exception:
-        pass
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     return cap
 
 
@@ -269,44 +238,63 @@ def _build_payload_from_counts(counts_dict):
 
 def one_shot_detect(crop):
     try:
-        
-        # Fixed small input for speed on pi
-        preds = model(crop, imgsz=320, agnostic_nms=False, verbose = False, device = 'cpu')[0]
+        # Slightly constrained imgsz for Pi performance
+        imgsz = int(np.clip(max(crop.shape[0], crop.shape[1]), 320, 640))
+        stride = 32
+        imgsz = int(math.ceil(imgsz / stride) * stride)
+        # Use class-aware NMS (do not suppress different classes)
+        preds = model(crop, imgsz=imgsz, agnostic_nms=False)
     except Exception:
         return [], Counter(), []
 
-    boxes_for_iou = []
-    counts = Counter()
-    boxes_labels = []
-    model_names = model.names if hasattr(model, "names") else {}
+    # Collect raw detections (x1, y1, x2, y2, label, conf)
+    raw = []
+    if preds:
+        results = preds[0]
+        if hasattr(results, "boxes") and results.boxes is not None:
+            for box in results.boxes:
+                x1, y1, x2, y2 = box.xyxy[0]
+                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                cls = int(box.cls[0]) if box.cls is not None else None
+                if cls is not None and isinstance(names, dict):
+                    label = names.get(cls, "Unknown")
+                else:
+                    label = "Unknown"
+                conf = float(box.conf[0]) if hasattr(box, "conf") and box.conf is not None else 0.0
+                raw.append((x1, y1, x2, y2, label, conf))
 
-    try:
-        if preds.boxes is not None and len(preds.boxes) > 0:
-            xyxy = preds.boxes.xyxy.cpu().numpy().astype(int)
-            cls = preds.boxes.cls.cpu().numpy().astype(int)
-            conf = preds.boxes.conf.cpu().numpy()
-            for (x1, y1, x2, y2), c, conf in zip(xyxy, cls, conf):
-                if conf < 0.25:
-                    continue
-                label = model_names.get(int(c), str(int(c)))
-                boxes_for_iou.append((int(x1), int(y1), int(x2), int(y2)))
-                boxes_labels.append((int(x1), int(y1), int(x2), int(y2), label))
-                counts[label] += 1
-    except Exception:
-        pass
+    # Light same-label suppression: keep highest confidence among strong overlaps
+    raw.sort(key=lambda b: b[5], reverse=True)
+    deduped = []
+    for cand in raw:
+        cx1, cy1, cx2, cy2, clabel, cconf = cand
+        keep = True
+        for kept in deduped:
+            kx1, ky1, kx2, ky2, klabel, kconf = kept
+            if _iou((cx1, cy1, cx2, cy2), (kx1, ky1, kx2, ky2)) > 0.5:
+                keep = False
+                break
+        if keep:
+            deduped.append(cand)
 
-    return boxes_for_iou, counts, boxes_labels
+    out_boxes = [(x1, y1, x2, y2, label) for (x1, y1, x2, y2, label, _c) in deduped]
+    labels = [label for (_x1, _y1, _x2, _y2, label, _c) in deduped]
 
-    
+    counts = Counter(labels)
+    payload = []
+    for product, count in counts.items():
+        meta = product_data.get(product)
+        barcode = meta.get('barcode') if meta else 'N/A'
+        payload.append({
+            'Name': product,
+            'Count': int(count),
+            'barcode': barcode
+        })
+    return out_boxes, counts, payload
 
 
 def main():
     cap = _open_camera()
-    cv2.setUseOptimized(True)
-    try:
-        cv2.setNumThreads(2)
-    except Exception:
-        pass
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -464,24 +452,22 @@ def main():
                     print(f"Error clearing DB on STABLE->PLACING: {e}")
 
         # Rendering
-        
-        if not HEADLESS:
-            view = cropped_frame.copy()
-            resized = cv2.resize(view, render_size)
-            if state == MotionState.IDLE:
-                draw_overlay(resized, "Waiting for item", position="center")
-            elif state == MotionState.PLACING:
-                if placing_just_entered:
-                    draw_overlay(resized, "Welcome to VBR realtime scanner", position="center", color=(255, 0, 0))
-                    placing_just_entered = False
-                else:
-                    draw_overlay(resized, "Placing items", position="center")
-            elif state == MotionState.STABLE:
-                draw_labels_centered(resized, frozen_boxes_labels, frozen_src_size)
-                draw_overlay(resized, "Proceed to payment now...", position="top", color=(0, 255, 0))
+        view = cropped_frame.copy()
+        resized = cv2.resize(view, render_size)
+        if state == MotionState.IDLE:
+            draw_overlay(resized, "Waiting for item", position="center")
+        elif state == MotionState.PLACING:
+            if placing_just_entered:
+                draw_overlay(resized, "Welcome to VBR realtime scanner", position="center", color=(255, 0, 0))
+                placing_just_entered = False
+            else:
+                draw_overlay(resized, "Placing items", position="center")
+        elif state == MotionState.STABLE:
+            draw_labels_centered(resized, frozen_boxes_labels, frozen_src_size)
+            draw_overlay(resized, "Proceed to payment now...", position="top", color=(0, 255, 0))
 
-            full_frame[:render_size[1], :] = resized
-            
+        full_frame[:render_size[1], :] = resized
+        if not HEADLESS:
             cv2.imshow("VBR Realtime scanner", full_frame)
 
             key = cv2.waitKey(1) & 0xFF
