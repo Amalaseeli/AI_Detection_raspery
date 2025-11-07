@@ -40,8 +40,7 @@ os.environ.setdefault('OPENBLAS_NUM_THREADS', '2')
 # Load the YOLO model
 model = YOLO(model_path)
 
-# Good default: 320 input, fused NMS
-model.export(format="tflite", imgsz=320, nms=True)  # creates models/fruit.tflite
+
 
 try:
     _ = model(np.zeros((320,320,3), dtype = np.uint8), imgsz=320, verbose=False, device ='cpu')

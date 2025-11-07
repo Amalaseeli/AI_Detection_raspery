@@ -68,4 +68,4 @@ def save_detected_product(json_txt: str):
         pass
 
 def clear_database():
-    save_detected_product('[]')
+        save_detected_product('[]')
