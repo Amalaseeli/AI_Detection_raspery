@@ -8,14 +8,21 @@ Differences vs object_detection_rpi.py:
 Usage:
   python object_detection_rpi_api.py
 
-Requires: models/fruit.pt (from config_utils_fruit.MODEL_PATH)
+Requires: TFLite model path from config_utils_fruit.MODEL_PATH
 """
 
-from ultralytics import YOLO
+# Try to use Ultralytics if available; otherwise fall back to a minimal
+# TFLite-only wrapper that doesn't require PyTorch on Raspberry Pi.
+try:
+    from ultralytics import YOLO  # type: ignore
+    _USING_ULTRALYTICS = True
+except Exception:
+    from tflite_yolo import TFLiteYOLO as YOLO  # type: ignore
+    _USING_ULTRALYTICS = False
 import cv2
 import numpy as np
 import pyautogui
-from config_utils_fruit import ROI_PATH as roi_path , MODEL_PATH as model_path, product_data
+from config_utils_fruit import ROI_PATH as roi_path , MODEL_PATH as model_path, product_data, classNames
 import os
 from save_to_db import save_detected_product, clear_database
 import math
@@ -37,8 +44,13 @@ except Exception:
 os.environ.setdefault('OMP_NUM_THREADS', '2')
 os.environ.setdefault('OPENBLAS_NUM_THREADS', '2')
 
-# Load the YOLO model
-model = YOLO(model_path)
+# Load the detection model (Ultralytics or TFLite wrapper)
+if _USING_ULTRALYTICS:
+    model = YOLO(model_path)
+else:
+    # Provide class name mapping to the TFLite wrapper
+    names_map = {i: n for i, n in enumerate(classNames)}
+    model = YOLO(model_path, names=names_map)
 
 
 
@@ -46,7 +58,7 @@ try:
     _ = model(np.zeros((320,320,3), dtype = np.uint8), imgsz=320, verbose=False, device ='cpu')
 except Exception:
     pass
-names = model.names if hasattr(model, "names") else {}
+names = getattr(model, 'names', {}) if hasattr(model, 'names') else {}
 
 # Screen size with headless-safe fallback
 try:
@@ -268,9 +280,8 @@ def _build_payload_from_counts(counts_dict):
 
 def one_shot_detect(crop):
     try:
-        
         # Fixed small input for speed on pi
-        preds = model(crop, imgsz=320, agnostic_nms=False, verbose = False, device = 'cpu')[0]
+        preds = model(crop, imgsz=320, agnostic_nms=False, verbose=False, device='cpu')[0]
     except Exception:
         return [], Counter(), []
 
@@ -280,12 +291,19 @@ def one_shot_detect(crop):
     model_names = model.names if hasattr(model, "names") else {}
 
     try:
-        if preds.boxes is not None and len(preds.boxes) > 0:
-            xyxy = preds.boxes.xyxy.cpu().numpy().astype(int)
-            cls = preds.boxes.cls.cpu().numpy().astype(int)
-            conf = preds.boxes.conf.cpu().numpy()
-            for (x1, y1, x2, y2), c, conf in zip(xyxy, cls, conf):
-                if conf < 0.25:
+        if hasattr(preds, 'boxes') and preds.boxes is not None:
+            # Handle both Ultralytics tensors and our numpy wrapper
+            xyxy = preds.boxes.xyxy
+            cls = preds.boxes.cls
+            conf = preds.boxes.conf
+            # Convert to numpy arrays
+            xyxy = xyxy if isinstance(xyxy, np.ndarray) else xyxy.cpu().numpy()
+            cls = cls if isinstance(cls, np.ndarray) else cls.cpu().numpy()
+            conf = conf if isinstance(conf, np.ndarray) else conf.cpu().numpy()
+            xyxy = xyxy.astype(int)
+            cls = cls.astype(int)
+            for (x1, y1, x2, y2), c, cf in zip(xyxy, cls, conf):
+                if cf < 0.25:
                     continue
                 label = model_names.get(int(c), str(int(c)))
                 boxes_for_iou.append((int(x1), int(y1), int(x2), int(y2)))

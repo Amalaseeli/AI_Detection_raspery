@@ -1,0 +1,7 @@
+sudo apt update && sudo apt install -y python3-venv python3-pip
+python3 -m venv venv
+source venv/bin/activate
+pip install -U pip wheel setuptools
+pip install -r requirements-rpi.txt --extra-index-url https://www.piwheels.org/simple
+pip install ultralytics --no-deps --extra-index-url https://www.piwheels.org/simple
+pip install tqdm psutil
