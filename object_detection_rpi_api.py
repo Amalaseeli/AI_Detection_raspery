@@ -308,8 +308,8 @@ def _build_payload_from_counts(counts_dict):
 
 def one_shot_detect(crop):
     try:
-        # Fixed small input for speed on Pi; use slightly stricter thresholds
-        preds = model(crop, imgsz=320, agnostic_nms=False, conf=0.3, iou=0.5, verbose=False, device='cpu')[0]
+        # Fixed small input for speed on Pi
+        preds = model(crop, imgsz=320, agnostic_nms=False, verbose=False, device='cpu')[0]
     except Exception:
         return [], Counter(), []
 

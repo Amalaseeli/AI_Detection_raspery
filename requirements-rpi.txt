@@ -25,16 +25,7 @@ PyYAML>=6.0.1
 requests>=2.31
 pyautogui>=0.9.53
 
-# Optional: database via ODBC on Pi (requires system packages first)
-# - sudo apt-get install -y unixodbc unixodbc-dev
-# - For Microsoft SQL Server: install the Microsoft ODBC Driver 18 (ARM/aarch64) if available,
-#   or configure FreeTDS and set driver to "FreeTDS" in db_cred_sql.yaml.
-#pyodbc
 
-# Optional: Ultralytics wrapper to drive .tflite models
-# Installing with full deps may try to pull PyTorch (not needed for TFLite).
-# Prefer:
-#   python3 -m pip install ultralytics --no-deps --extra-index-url https://www.piwheels.org/simple
-# Then rely on the packages in this file.
-#ultralytics
+pyodbc
+
 

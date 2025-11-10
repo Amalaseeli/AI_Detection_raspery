@@ -1,4 +1,5 @@
 import numpy as np
+import cv2
 
 try:
     from tflite_runtime.interpreter import Interpreter
@@ -39,10 +40,10 @@ class TFLiteYOLO:
     def __call__(self, image_bgr: np.ndarray, imgsz: int = 320, agnostic_nms: bool = False, verbose: bool = False, device: str = "cpu"):
         h0, w0 = image_bgr.shape[:2]
         # Resize with letterbox to model input size while keeping aspect ratio simple: just resize
-        img = image_bgr
+        # Convert BGR -> RGB as most TFLite models expect RGB
+        img = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
         if (self.in_w, self.in_h) != (w0, h0):
-            from cv2 import resize, INTER_LINEAR
-            img = resize(image_bgr, (self.in_w, self.in_h), interpolation=INTER_LINEAR)
+            img = cv2.resize(img, (self.in_w, self.in_h), interpolation=cv2.INTER_LINEAR)
         x = img.astype(np.float32)
         # Assume 0-1 normalization
         if x.max() > 1.0:
@@ -111,6 +112,13 @@ class TFLiteYOLO:
                 cx, cy, w, h = a[:, 0], a[:, 1], a[:, 2], a[:, 3]
                 x1, y1 = cx - w / 2.0, cy - h / 2.0
                 x2, y2 = cx + w / 2.0, cy + h / 2.0
+            # Some exports output pixel coords (not normalized). If so, scale down.
+            if (x2 > 1).any() or (y2 > 1).any():
+                # Treat as pixel coords relative to input size
+                x1 = (x1 / float(self.in_w)).clip(0, 1)
+                x2 = (x2 / float(self.in_w)).clip(0, 1)
+                y1 = (y1 / float(self.in_h)).clip(0, 1)
+                y2 = (y2 / float(self.in_h)).clip(0, 1)
             x1 = (x1 * w0).clip(0, w0 - 1)
             y1 = (y1 * h0).clip(0, h0 - 1)
             x2 = (x2 * w0).clip(0, w0 - 1)
@@ -120,4 +128,3 @@ class TFLiteYOLO:
 
         # Fallback: no detections
         return np.zeros((0, 4), dtype=np.int32), np.zeros((0,), dtype=np.float32), np.zeros((0,), dtype=np.float32)
-
