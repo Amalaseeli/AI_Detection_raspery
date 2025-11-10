@@ -208,6 +208,22 @@ def draw_labels_centered(img, boxes_labels, src_size):
         cv2.putText(img, str(label), (x, y), font, font_scale, color, thickness, cv2.LINE_AA)
 
 
+def draw_boxes(img, boxes_labels, src_size, color=(0, 255, 0), thickness=2):
+    if not boxes_labels:
+        return
+    h, w = img.shape[:2]
+    if not src_size or src_size[0] == 0 or src_size[1] == 0:
+        scale_x = 1.0
+        scale_y = 1.0
+    else:
+        scale_x = float(w) / float(src_size[0])
+        scale_y = float(h) / float(src_size[1])
+    for (x1, y1, x2, y2, _label) in boxes_labels:
+        p1 = (int(x1 * scale_x), int(y1 * scale_y))
+        p2 = (int(x2 * scale_x), int(y2 * scale_y))
+        cv2.rectangle(img, p1, p2, color, thickness)
+
+
 # Motion detection
 prev_frame = None
 motion_area_threshold = 2000
@@ -526,6 +542,8 @@ def main():
                 else:
                     draw_overlay(resized, "Placing items", position="center")
             elif state == MotionState.STABLE:
+                # Draw boxes and labels for clarity
+                draw_boxes(resized, frozen_boxes_labels, frozen_src_size)
                 draw_labels_centered(resized, frozen_boxes_labels, frozen_src_size)
                 draw_overlay(resized, "Proceed to payment now...", position="top", color=(0, 255, 0))
 

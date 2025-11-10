@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import cv2
 
@@ -36,6 +37,7 @@ class TFLiteYOLO:
         self.outs = self.interp.get_output_details()
         # Input shape: [1, H, W, 3]
         _, self.in_h, self.in_w, _ = self.inp["shape"]
+        self._debug = os.getenv("DEBUG_DET", "0") == "1" or os.getenv("TFL_DEBUG", "0") == "1"
 
     def __call__(self, image_bgr: np.ndarray, imgsz: int = 320, agnostic_nms: bool = False, verbose: bool = False, device: str = "cpu"):
         h0, w0 = image_bgr.shape[:2]
@@ -58,6 +60,11 @@ class TFLiteYOLO:
 
         # Try to parse outputs from common Ultralytics TFLite export formats
         tensors = [self.interp.get_tensor(o["index"]) for o in self.outs]
+        if self._debug:
+            try:
+                print("[TFLiteYOLO] outputs:", [t.shape for t in tensors])
+            except Exception:
+                pass
 
         boxes, scores, classes = self._parse_outputs(tensors, (w0, h0))
         boxes_obj = _Boxes(boxes, classes, scores)
@@ -101,6 +108,9 @@ class TFLiteYOLO:
             arr = arr[0]
         if arr.ndim == 2 and arr.shape[1] >= 6:
             a = arr.astype(np.float32)
+            # Some exports may include extra columns; slice first 6
+            if a.shape[1] > 6:
+                a = a[:, :6]
             x1, y1, x2, y2, conf, cls = None, None, None, None, a[:, 4], a[:, 5]
             # Heuristic to detect if columns are xyxy or xywh
             col2_bigger = (a[:, 2] > a[:, 0]).mean() > 0.5 and (a[:, 3] > a[:, 1]).mean() > 0.5
@@ -125,6 +135,25 @@ class TFLiteYOLO:
             y2 = (y2 * h0).clip(0, h0 - 1)
             xyxy = np.stack([x1, y1, x2, y2], axis=1).astype(np.int32)
             return xyxy, conf, cls
+
+        # Case C: Some NMS models return two arrays each (1,N,6); try merging
+        if len(tensors) >= 2:
+            a = tensors[0]
+            b = tensors[1]
+            for arr in (a, b):
+                if arr.ndim == 3 and arr.shape[-1] >= 6:
+                    tmp = arr[0].astype(np.float32)
+                    if tmp.shape[1] > 6:
+                        tmp = tmp[:, :6]
+                    x1, y1, x2, y2, conf, cls = tmp[:, 0], tmp[:, 1], tmp[:, 2], tmp[:, 3], tmp[:, 4], tmp[:, 5]
+                    if (x2 <= 1).all() and (y2 <= 1).all():
+                        # normalized
+                        x1 = (x1 * w0).clip(0, w0 - 1)
+                        y1 = (y1 * h0).clip(0, h0 - 1)
+                        x2 = (x2 * w0).clip(0, w0 - 1)
+                        y2 = (y2 * h0).clip(0, h0 - 1)
+                    xyxy = np.stack([x1, y1, x2, y2], axis=1).astype(np.int32)
+                    return xyxy, conf, cls
 
         # Fallback: no detections
         return np.zeros((0, 4), dtype=np.int32), np.zeros((0,), dtype=np.float32), np.zeros((0,), dtype=np.float32)
