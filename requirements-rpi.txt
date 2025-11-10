@@ -1,0 +1,40 @@
+# Raspberry Pi runtime requirements (TFLite)
+#
+# Recommended install (uses piwheels for ARM builds):
+#   python3 -m pip install --upgrade pip
+#   python3 -m pip install -r requirements-rpi.txt --extra-index-url https://www.piwheels.org/simple
+#
+# Target: Raspberry Pi OS (Bullseye/Bookworm), Python 3.9–3.11
+# Notes:
+# - Uses TensorFlow Lite runtime (no PyTorch).
+# - OpenCV here includes GUI support (imshow, selectROI). If you are headless,
+#   consider replacing `opencv-python` with `opencv-python-headless`.
+# - If you plan to keep using Ultralytics with a .tflite model, install
+#   `ultralytics` separately with `--no-deps` to avoid pulling PyTorch.
+
+# Core numeric + runtime
+numpy==1.26.4
+tflite-runtime>=2.14,<2.17
+
+# Vision + imaging
+opencv-python==4.6.0.66
+Pillow>=9.5,<11
+
+# Utilities
+PyYAML>=6.0.1
+requests>=2.31
+pyautogui>=0.9.53
+
+# Optional: database via ODBC on Pi (requires system packages first)
+# - sudo apt-get install -y unixodbc unixodbc-dev
+# - For Microsoft SQL Server: install the Microsoft ODBC Driver 18 (ARM/aarch64) if available,
+#   or configure FreeTDS and set driver to "FreeTDS" in db_cred_sql.yaml.
+#pyodbc
+
+# Optional: Ultralytics wrapper to drive .tflite models
+# Installing with full deps may try to pull PyTorch (not needed for TFLite).
+# Prefer:
+#   python3 -m pip install ultralytics --no-deps --extra-index-url https://www.piwheels.org/simple
+# Then rely on the packages in this file.
+#ultralytics
+

@@ -391,12 +391,13 @@ def main():
                 frozen_boxes_labels = []
                 placing_just_entered = True
             else:
-                tmp_boxes, tmp_counts, tmp_payload = one_shot_detect(cropped_frame)
-                if tmp_payload:
-                    frozen_boxes_labels = tmp_boxes
+                boxes_for_iou, counts, boxes_labels = one_shot_detect(cropped_frame)
+                has_items = bool(boxes_labels)
+                if has_items:
+                    frozen_boxes_labels = boxes_labels
                     frozen_src_size = (cropped_frame.shape[1], cropped_frame.shape[0])
                     state = MotionState.STABLE
-                    placing_counts_max = {k: int(v) for k, v in tmp_counts.items()}
+                    placing_counts_max = {k: int(v) for k, v in counts.items()}
                     final_payload = _build_payload_from_counts(placing_counts_max)
                     try:
                         if not stable_payload_sent:
@@ -411,12 +412,11 @@ def main():
                         has_cleared_db = True
 
         elif state == MotionState.PLACING:
-            boxes, counts, payload = one_shot_detect(cropped_frame)
-            has_items = bool(payload)
+            boxes_for_iou, counts, boxes_labels = one_shot_detect(cropped_frame)
+            has_items = bool(boxes_labels)
             if has_items:
-                frozen_boxes_labels = boxes
+                frozen_boxes_labels = boxes_labels
                 frozen_src_size = (cropped_frame.shape[1], cropped_frame.shape[0])
-                # Update max counts seen during placing
                 for product, cnt in counts.items():
                     prev = placing_counts_max.get(product, 0)
                     if int(cnt) > int(prev):
@@ -427,7 +427,6 @@ def main():
                     state = MotionState.STABLE
                     try:
                         if not stable_payload_sent:
-                            # Use the counts from the stable frame for exact match with UI
                             final_payload = _build_payload_from_counts({k: int(v) for k, v in counts.items()})
                             save_detected_product(json.dumps(final_payload))
                             stable_payload_sent = True
@@ -446,7 +445,6 @@ def main():
                         has_cleared_db = True
                     except Exception as e:
                         print(f"Error clearing database in PLACING->IDLE: {e}")
-
         elif state == MotionState.STABLE:
             if motion_count >= motion_frames_required:
                 state = MotionState.PLACING
