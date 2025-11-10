@@ -108,31 +108,76 @@ class TFLiteYOLO:
             arr = arr[0]
         if arr.ndim == 2 and arr.shape[1] >= 6:
             a = arr.astype(np.float32)
-            # Some exports may include extra columns; slice first 6
             if a.shape[1] > 6:
                 a = a[:, :6]
-            x1, y1, x2, y2, conf, cls = None, None, None, None, a[:, 4], a[:, 5]
-            # Heuristic to detect if columns are xyxy or xywh
-            col2_bigger = (a[:, 2] > a[:, 0]).mean() > 0.5 and (a[:, 3] > a[:, 1]).mean() > 0.5
-            if col2_bigger:
-                # Assume xyxy normalized 0..1
-                x1, y1, x2, y2 = a[:, 0], a[:, 1], a[:, 2], a[:, 3]
-            else:
-                # Assume xywh normalized 0..1
-                cx, cy, w, h = a[:, 0], a[:, 1], a[:, 2], a[:, 3]
+
+            # Determine which of the last two columns is class vs confidence
+            conf_col, cls_col = 4, 5
+            if self.names:
+                ncls = max(1, len(self.names))
+                # choose the column that looks like integer class ids
+                cand5 = a[:, 5]
+                cand4 = a[:, 4]
+                def score_as_class(col):
+                    r = np.rint(col)
+                    ok = ((r >= 0) & (r < ncls) & (np.abs(r - col) < 1e-3)).mean()
+                    return ok
+                s5 = score_as_class(cand5)
+                s4 = score_as_class(cand4)
+                if s4 > s5 + 0.2:
+                    conf_col, cls_col = 5, 4
+
+            conf = a[:, conf_col]
+            cls = a[:, cls_col]
+
+            # Determine box format by validating both interpretations and choosing the better one
+            b = a[:, :4]
+            # normalized if values mostly <= 1.2
+            normalized = (b <= 1.2).mean() > 0.9
+            def to_xyxy_xyxyfmt(bb):
+                x1, y1, x2, y2 = bb[:, 0], bb[:, 1], bb[:, 2], bb[:, 3]
+                return x1, y1, x2, y2
+            def to_xyxy_xywhfmt(bb):
+                cx, cy, w, h = bb[:, 0], bb[:, 1], bb[:, 2], bb[:, 3]
                 x1, y1 = cx - w / 2.0, cy - h / 2.0
                 x2, y2 = cx + w / 2.0, cy + h / 2.0
-            # Some exports output pixel coords (not normalized). If so, scale down.
-            if (x2 > 1).any() or (y2 > 1).any():
-                # Treat as pixel coords relative to input size
-                x1 = (x1 / float(self.in_w)).clip(0, 1)
-                x2 = (x2 / float(self.in_w)).clip(0, 1)
-                y1 = (y1 / float(self.in_h)).clip(0, 1)
-                y2 = (y2 / float(self.in_h)).clip(0, 1)
-            x1 = (x1 * w0).clip(0, w0 - 1)
-            y1 = (y1 * h0).clip(0, h0 - 1)
-            x2 = (x2 * w0).clip(0, w0 - 1)
-            y2 = (y2 * h0).clip(0, h0 - 1)
+                return x1, y1, x2, y2
+            # Try both
+            x1a, y1a, x2a, y2a = to_xyxy_xyxyfmt(b)
+            x1b, y1b, x2b, y2b = to_xyxy_xywhfmt(b)
+
+            def valid_frac(x1, y1, x2, y2, norm):
+                if norm:
+                    wv = (x2 - x1) > 0
+                    hv = (y2 - y1) > 0
+                    within = (x1 >= 0) & (y1 >= 0) & (x2 <= 1.0) & (y2 <= 1.0)
+                else:
+                    wv = (x2 - x1) > 0
+                    hv = (y2 - y1) > 0
+                    within = (x1 >= 0) & (y1 >= 0) & (x2 <= self.in_w) & (y2 <= self.in_h)
+                return (wv & hv & within).mean()
+
+            va = valid_frac(x1a, y1a, x2a, y2a, normalized)
+            vb = valid_frac(x1b, y1b, x2b, y2b, normalized)
+            if vb > va:
+                x1, y1, x2, y2 = x1b, y1b, x2b, y2b
+            else:
+                x1, y1, x2, y2 = x1a, y1a, x2a, y2a
+
+            # Scale to original image size
+            if normalized:
+                x1 = (x1 * w0).clip(0, w0 - 1)
+                x2 = (x2 * w0).clip(0, w0 - 1)
+                y1 = (y1 * h0).clip(0, h0 - 1)
+                y2 = (y2 * h0).clip(0, h0 - 1)
+            else:
+                # pixels relative to model input
+                sx, sy = float(w0) / float(self.in_w), float(h0) / float(self.in_h)
+                x1 = (x1 * sx).clip(0, w0 - 1)
+                x2 = (x2 * sx).clip(0, w0 - 1)
+                y1 = (y1 * sy).clip(0, h0 - 1)
+                y2 = (y2 * sy).clip(0, h0 - 1)
+
             xyxy = np.stack([x1, y1, x2, y2], axis=1).astype(np.int32)
             return xyxy, conf, cls
 
