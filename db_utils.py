@@ -1,7 +1,12 @@
 import os
 import yaml
-import pyodbc
 from pathlib import Path
+
+# Make pyodbc optional so the app can run on Raspberry Pi without ODBC.
+try:
+    import pyodbc  # type: ignore
+except Exception:  # pragma: no cover
+    pyodbc = None  # type: ignore
 
 
 class DatabaseConnector:
@@ -56,6 +61,9 @@ class DatabaseConnector:
 
     def create_connection(self):
         try:
+            if pyodbc is None:
+                print("pyodbc not available; skipping DB connection.")
+                return None
             server = self.cfg["server"]
             database = self.cfg["database"]
             driver = self.cfg["driver"]
@@ -121,8 +129,9 @@ class DatabaseConnector:
         except Exception as e:
             print(f"DB connection error: {e}")
             try:
-                # Help diagnose by printing installed ODBC drivers
-                print(f"Available ODBC drivers: {pyodbc.drivers()}")
+                # Help diagnose by printing installed ODBC drivers, if pyodbc exists
+                if pyodbc is not None:
+                    print(f"Available ODBC drivers: {pyodbc.drivers()}")
             except Exception:
                 pass
             return None

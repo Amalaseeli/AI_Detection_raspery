@@ -24,7 +24,8 @@ import numpy as np
 import pyautogui
 from config_utils_fruit import ROI_PATH as roi_path , MODEL_PATH as model_path, product_data, classNames
 import os
-from save_to_db import save_detected_product, clear_database
+# Use direct DB writer by default; API writer is optional
+from save_to_db import save_detected_product, clear_database  # type: ignore
 import math
 from collections import Counter
 import json
@@ -265,6 +266,33 @@ def _iou(box_a, box_b):
         return 0.0
     return inter / union
 
+def _dedupe_detections(dets, iou_same: float = 0.5, iou_diff: float = 0.7):
+    """
+    Suppress overlapping boxes so a single object doesn't get two labels.
+    - Same-class overlaps (IoU >= iou_same): keep highest-confidence only.
+    - Different-class overlaps (IoU >= iou_diff): keep highest-confidence only.
+    dets: list[(x1, y1, x2, y2, label, conf)]
+    """
+    if not dets:
+        return dets
+    dets_sorted = sorted(dets, key=lambda d: float(d[5]), reverse=True)
+    kept = []
+    for d in dets_sorted:
+        suppress = False
+        for k in kept:
+            iou = _iou((d[0], d[1], d[2], d[3]), (k[0], k[1], k[2], k[3]))
+            if d[4] == k[4]:
+                if iou >= iou_same:
+                    suppress = True
+                    break
+            else:
+                if iou >= iou_diff:
+                    suppress = True
+                    break
+        if not suppress:
+            kept.append(d)
+    return kept
+
 def _build_payload_from_counts(counts_dict):
     payload = []
     for product, count in counts_dict.items():
@@ -280,8 +308,8 @@ def _build_payload_from_counts(counts_dict):
 
 def one_shot_detect(crop):
     try:
-        # Fixed small input for speed on pi
-        preds = model(crop, imgsz=320, agnostic_nms=False, verbose=False, device='cpu')[0]
+        # Fixed small input for speed on Pi; use slightly stricter thresholds
+        preds = model(crop, imgsz=320, agnostic_nms=False, conf=0.3, iou=0.5, verbose=False, device='cpu')[0]
     except Exception:
         return [], Counter(), []
 
@@ -291,24 +319,30 @@ def one_shot_detect(crop):
     model_names = model.names if hasattr(model, "names") else {}
 
     try:
+        dets = []
         if hasattr(preds, 'boxes') and preds.boxes is not None:
             # Handle both Ultralytics tensors and our numpy wrapper
             xyxy = preds.boxes.xyxy
             cls = preds.boxes.cls
-            conf = preds.boxes.conf
+            conf_arr = preds.boxes.conf
             # Convert to numpy arrays
             xyxy = xyxy if isinstance(xyxy, np.ndarray) else xyxy.cpu().numpy()
             cls = cls if isinstance(cls, np.ndarray) else cls.cpu().numpy()
-            conf = conf if isinstance(conf, np.ndarray) else conf.cpu().numpy()
+            conf_arr = conf_arr if isinstance(conf_arr, np.ndarray) else conf_arr.cpu().numpy()
             xyxy = xyxy.astype(int)
             cls = cls.astype(int)
-            for (x1, y1, x2, y2), c, cf in zip(xyxy, cls, conf):
+            for (x1, y1, x2, y2), c, cf in zip(xyxy, cls, conf_arr):
                 if cf < 0.25:
                     continue
                 label = model_names.get(int(c), str(int(c)))
-                boxes_for_iou.append((int(x1), int(y1), int(x2), int(y2)))
-                boxes_labels.append((int(x1), int(y1), int(x2), int(y2), label))
-                counts[label] += 1
+                dets.append((int(x1), int(y1), int(x2), int(y2), label, float(cf)))
+
+        # Deduplicate overlapping detections
+        dets = _dedupe_detections(dets, iou_same=0.5, iou_diff=0.7)
+        for x1, y1, x2, y2, label, cf in dets:
+            boxes_for_iou.append((x1, y1, x2, y2))
+            boxes_labels.append((x1, y1, x2, y2, label))
+            counts[label] += 1
     except Exception:
         pass
 

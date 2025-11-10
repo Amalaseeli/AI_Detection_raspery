@@ -1,12 +1,24 @@
 from db_utils import DatabaseConnector
-import pyodbc
 import threading
 import queue
 import time
+import os
+from typing import Optional
+from config_utils_fruit import get_data_dir
+
+# Make pyodbc optional to support Raspberry Pi without ODBC
+try:
+    import pyodbc  # type: ignore
+except Exception:  # pragma: no cover
+    pyodbc = None  # type: ignore
 
 _db = DatabaseConnector()
 _write_q: "queue.Queue[str]" = queue.Queue(maxsize=32)
 _stop_evt = threading.Event()
+_fallback_path = os.path.join(get_data_dir(), "AITransaction.json")
+
+# Exception type that we can safely catch even if pyodbc is not present
+OdbcError = Exception if pyodbc is None else pyodbc.Error  # type: ignore
 
 def _ensure_table(cursor):
     cursor.execute("""
@@ -19,15 +31,27 @@ IF NOT EXISTS (SELECT 1 FROM dbo.AITransaction)
 """)
 
 def _writer_loop():
-    conn = None
+    conn: Optional[object] = None
     cursor = None
-    last_payload = None
+    last_payload: Optional[str] = None
     while not _stop_evt.is_set():
         try:
             payload = _write_q.get(timeout=0.5)
         except queue.Empty:
             continue
         try:
+            # If pyodbc is unavailable, write to a local JSON file as a fallback.
+            if pyodbc is None:
+                if payload != last_payload:
+                    try:
+                        os.makedirs(os.path.dirname(_fallback_path), exist_ok=True)
+                        with open(_fallback_path, "w", encoding="utf-8") as f:
+                            f.write(payload)
+                        last_payload = payload
+                    except Exception:
+                        pass
+                continue
+
             if conn is None:
                 conn = _db.create_connection()
                 if conn is None:
@@ -44,13 +68,15 @@ def _writer_loop():
                 cursor.execute("INSERT INTO dbo.AITransaction (AIJsonTxt) VALUES (?)", (payload,))
             conn.commit()
             last_payload = payload
-        except pyodbc.Error:
+        except OdbcError:
             try:
-                if cursor: cursor.close()
+                if cursor:
+                    cursor.close()
             except Exception:
                 pass
             try:
-                if conn: conn.close()
+                if conn:
+                    conn.close()
             except Exception:
                 pass
             conn, cursor = None, None
