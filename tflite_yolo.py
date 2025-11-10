@@ -3,10 +3,12 @@ import numpy as np
 import cv2
 
 try:
-    from tflite_runtime.interpreter import Interpreter
+    from tflite_runtime.interpreter import Interpreter, load_delegate
 except Exception:
     # Fallback to full TensorFlow if available
     from tensorflow.lite import Interpreter  # type: ignore
+    def load_delegate(name):  # type: ignore
+        raise RuntimeError("Delegates not available with tensorflow.lite fallback")
 
 
 class _Boxes:
@@ -28,10 +30,16 @@ class TFLiteYOLO:
     that has `.boxes.xyxy`, `.boxes.cls`, and `.boxes.conf`.
     """
 
-    def __init__(self, model_path: str, names: dict | None = None, num_threads: int = 2):
+    def __init__(self, model_path: str, names: dict | None = None, num_threads: int = 2, delegate: str = ""):
         self.model_path = model_path
         self.names = names or {}
-        self.interp = Interpreter(model_path=model_path, num_threads=num_threads)
+        delegates = None
+        if isinstance(delegate, str) and delegate.lower() in ("edgetpu", "edge_tpu", "coral"):
+            try:
+                delegates = [load_delegate("libedgetpu.so.1")]
+            except Exception:
+                delegates = None
+        self.interp = Interpreter(model_path=model_path, num_threads=num_threads, experimental_delegates=delegates)
         self.interp.allocate_tensors()
         self.inp = self.interp.get_input_details()[0]
         self.outs = self.interp.get_output_details()

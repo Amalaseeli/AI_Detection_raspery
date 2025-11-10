@@ -49,9 +49,14 @@ os.environ.setdefault('OPENBLAS_NUM_THREADS', '2')
 if _USING_ULTRALYTICS:
     model = YOLO(model_path)
 else:
-    # Provide class name mapping to the TFLite wrapper
+    # Provide class name mapping to the TFLite wrapper and allow tuning threads/delegate via env
     names_map = {i: n for i, n in enumerate(classNames)}
-    model = YOLO(model_path, names=names_map)
+    try:
+        tfl_threads = int(os.getenv("TFL_THREADS", "4"))
+    except Exception:
+        tfl_threads = 2
+    tfl_delegate = os.getenv("TFL_DELEGATE", "")
+    model = YOLO(model_path, names=names_map, num_threads=tfl_threads, delegate=tfl_delegate)
 
 
 
