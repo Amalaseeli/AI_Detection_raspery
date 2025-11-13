@@ -355,7 +355,7 @@ def one_shot_detect(crop):
             for (x1, y1, x2, y2), c, cf in zip(xyxy, cls, conf_arr):
                 if cf < 0.25:
                     continue
-                label = model_names.get(int(c), str(int(c)))
+                label = f'{model_names.get(int(c), str(int(c)))}, {cf:.2f}'
                 dets.append((int(x1), int(y1), int(x2), int(y2), label, float(cf)))
 
         # Deduplicate overlapping detections
