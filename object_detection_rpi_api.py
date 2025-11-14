@@ -1,18 +1,6 @@
-"""
-Raspberry Pi friendly version of the realtime scanner (API variant).
 
-Differences vs object_detection_rpi.py:
-- Sends payloads to an HTTP API via save_to_db_api instead of SQL Server ODBC
-- Leaves original files untouched; use this file on Pi
 
-Usage:
-  python object_detection_rpi_api.py
 
-Requires: TFLite model path from config_utils_fruit.MODEL_PATH
-"""
-
-# Try to use Ultralytics if available; otherwise fall back to a minimal
-# TFLite-only wrapper that doesn't require PyTorch on Raspberry Pi.
 try:
     from ultralytics import YOLO  # type: ignore
     _USING_ULTRALYTICS = True
@@ -327,6 +315,21 @@ def _build_payload_from_counts(counts_dict):
     return payload
 
 
+def _canonicalize_product_name(raw_name: str) -> str:
+    """
+    Map detector-provided labels to the canonical keys used in product_data.
+    Falls back to the original label (or 'Unknown') if no match is found.
+    """
+    if not raw_name:
+        return "Unknown"
+    candidate = raw_name.strip()
+    candidate_lower = candidate.lower()
+    for known_name in product_data.keys():
+        if known_name.lower() == candidate_lower:
+            return known_name
+    return candidate or "Unknown"
+
+
 def one_shot_detect(crop):
     try:
         # Fixed small input for speed on Pi
@@ -352,18 +355,24 @@ def one_shot_detect(crop):
             conf_arr = conf_arr if isinstance(conf_arr, np.ndarray) else conf_arr.cpu().numpy()
             xyxy = xyxy.astype(int)
             cls = cls.astype(int)
+            unknown_conf = 0.85
             for (x1, y1, x2, y2), c, cf in zip(xyxy, cls, conf_arr):
                 if cf < 0.25:
                     continue
-                label = f'{model_names.get(int(c), str(int(c)))}, {cf:.2f}'
-                dets.append((int(x1), int(y1), int(x2), int(y2), label, float(cf)))
+                class_id = int(c)
+                raw_name = model_names.get(class_id, f"Class {class_id}")
+                canonical_name = _canonicalize_product_name(raw_name)
+                if cf < unknown_conf:
+                    canonical_name = "Unknown"
+                dets.append((int(x1), int(y1), int(x2), int(y2), canonical_name, float(cf)))
 
         # Deduplicate overlapping detections
         dets = _dedupe_detections(dets, iou_same=0.5, iou_diff=0.7)
-        for x1, y1, x2, y2, label, cf in dets:
+        for x1, y1, x2, y2, canonical_name, cf in dets:
             boxes_for_iou.append((x1, y1, x2, y2))
-            boxes_labels.append((x1, y1, x2, y2, label))
-            counts[label] += 1
+            display_label = f'{canonical_name}, {cf:.2f}'
+            boxes_labels.append((x1, y1, x2, y2, display_label))
+            counts[canonical_name] += 1
     except Exception:
         pass
 
